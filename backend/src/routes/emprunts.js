@@ -1,9 +1,8 @@
 import { Router } from "express";
-import mongoose from "mongoose";
 import Ouvrage from "../models/Ouvrage.js";
-import Adherent from "../models/Adherent.js";
 import Emprunt from "../models/Emprunt.js";
 import { adminOnly } from "../middlewares/role.js";
+import { toObjectId, resolveAdherent } from "../utils/adherent.js";
 
 const router = Router();
 const DUREE_JOURS = { etudiant: 14, enseignant: 30 };
@@ -11,10 +10,20 @@ const DUREE_JOURS = { etudiant: 14, enseignant: 30 };
 // ── GET /api/emprunts — liste avec filtres et pagination ──────────────────────
 router.get("/", async (req, res, next) => {
   try {
-    const { statut, adherent, retard, page = 1, limit = 50 } = req.query;
+    const { statut, adherent, retard, q, page = 1, limit = 50 } = req.query;
     const filtre = {};
 
     if (statut)   filtre.statut   = statut;
+
+    // Recherche texte sur les champs dénormalisés (titre, adhérent, exemplaire)
+    if (q && q.trim()) {
+      const rx = new RegExp(q.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+      filtre.$or = [
+        { ouvrageTitre: rx },
+        { adherentNom: rx },
+        { exemplaireCode: rx },
+      ];
+    }
     
     // Si membre, on force le filtre sur son ID. Si admin, on utilise le filtre query s'il existe.
     if (req.user.role !== "admin") {
@@ -50,10 +59,13 @@ router.post("/", adminOnly, async (req, res, next) => {
     if (!ouvrageId || !adherentId)
       return res.status(400).json({ erreur: "ouvrageId et adherentId requis" });
 
-    const adherent = await Adherent.findById(adherentId);
+    const adherent = await resolveAdherent(adherentId);
     if (!adherent) return res.status(404).json({ erreur: "Adhérent introuvable" });
+    if (adherent.statut !== "actif") {
+      return res.status(403).json({ erreur: "Compte inactif — emprunt impossible." });
+    }
 
-    const adherentObjId  = new mongoose.Types.ObjectId(adherentId);
+    const adherentObjId = toObjectId(adherent._id);
     const conditionCode  = exemplaireCode ? { code: exemplaireCode } : {};
 
     // Tentative 1 : convertir SA réservation en emprunt
@@ -104,7 +116,7 @@ router.post("/", adminOnly, async (req, res, next) => {
       exemplaireCode
         ? ex.code === exemplaireCode
         : viaReservation
-        ? ex.statut === "reserve" && String(ex.reservePar) === String(adherentId)
+        ? ex.statut === "reserve" && String(ex.reservePar) === String(adherent._id)
         : ex.statut === "disponible"
     );
 

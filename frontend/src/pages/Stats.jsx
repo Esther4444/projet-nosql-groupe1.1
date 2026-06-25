@@ -1,167 +1,264 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
+import DonutChart from "../components/DonutChart.jsx";
+import BurgerBars from "../components/BurgerBars.jsx";
 
-const MEDALS = [
-  <span key="1" className="material-symbols-rounded" style={{ fontSize: 20, color: "#FCD34D" }}>military_tech</span>,
-  <span key="2" className="material-symbols-rounded" style={{ fontSize: 20, color: "#9CA3AF" }}>military_tech</span>,
-  <span key="3" className="material-symbols-rounded" style={{ fontSize: 20, color: "#D97706" }}>military_tech</span>,
+const CAT_COLORS = [
+  "#0EA5E9", "#C9A84C", "#22C55E", "#A855F7", "#F59E0B", "#EF4444", "#6366F1", "#14B8A6",
 ];
 
+const MEDALS = ["🥇", "🥈", "🥉"];
+
 export default function Stats() {
-  const [top, setTop]       = useState([]);
-  const [cats, setCats]     = useState([]);
+  const [top, setTop]         = useState([]);
+  const [cats, setCats]       = useState([]);
+  const [dash, setDash]       = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([api.topOuvrages(), api.topCategories()])
-      .then(([t, c]) => { setTop(t); setCats(c); })
+    Promise.all([api.topOuvrages(), api.topCategories(), api.dashboard()])
+      .then(([t, c, d]) => { setTop(t); setCats(c); setDash(d); })
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
 
-  const maxTop  = top[0]?.totalEmprunts  || 1;
-  const maxCats = cats[0]?.totalEmprunts || 1;
+  const totalEmpruntsCats = cats.reduce((s, c) => s + c.totalEmprunts, 0);
+  const totalTopEmprunts  = top.reduce((s, o) => s + o.totalEmprunts, 0);
+
+  const catDonutData = cats.map((c, i) => ({
+    key: c.categorie ?? i,
+    label: c.categorie ?? "Non classé",
+    value: c.totalEmprunts,
+    color: CAT_COLORS[i % CAT_COLORS.length],
+  }));
+
+  const exDispos = dash?.totalExemplairesDispos ?? 0;
+  const exTotal  = dash?.totalExemplaires ?? 0;
+  const exOccupes = Math.max(0, exTotal - exDispos);
+
+  const stockDonutData = [
+    { key: "dispo", label: "Disponibles", value: exDispos, color: "#22C55E" },
+    { key: "occupe", label: "Empruntés / réservés", value: exOccupes, color: "#0EA5E9" },
+  ].filter((d) => d.value > 0);
+
+  const top5DonutData = top.slice(0, 5).map((o, i) => ({
+    key: o.ouvrageId,
+    label: o.titre,
+    value: o.totalEmprunts,
+    color: CAT_COLORS[i % CAT_COLORS.length],
+  }));
+  const autresTop = totalTopEmprunts - top.slice(0, 5).reduce((s, o) => s + o.totalEmprunts, 0);
+  if (autresTop > 0 && top.length > 5) {
+    top5DonutData.push({ key: "autres", label: "Autres (top 6–10)", value: autresTop, color: "#94A3B8" });
+  }
+
+  const burgerTop = top.map((o, i) => ({
+    key: o.ouvrageId,
+    label: o.titre,
+    sub: o.auteur,
+    value: o.totalEmprunts,
+    color: i === 0
+      ? "linear-gradient(90deg, #C9A84C, #E8C96A)"
+      : i === 1
+      ? "linear-gradient(90deg, #9CA3AF, #D1D5DB)"
+      : i === 2
+      ? "linear-gradient(90deg, #CD7F32, #E8A96A)"
+      : `linear-gradient(90deg, ${CAT_COLORS[i % CAT_COLORS.length]}, ${CAT_COLORS[(i + 2) % CAT_COLORS.length]})`,
+  }));
+
+  const burgerCats = cats.map((c, i) => ({
+    key: c.categorie ?? i,
+    label: c.categorie ?? "Non classé",
+    value: c.totalEmprunts,
+    color: `linear-gradient(90deg, ${CAT_COLORS[i % CAT_COLORS.length]}, ${CAT_COLORS[(i + 3) % CAT_COLORS.length]})`,
+  }));
+
+  if (loading) {
+    return (
+      <section className="stats-page">
+        <div className="stats-kpi-grid">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="stats-kpi-card skeleton" style={{ height: 100 }} />
+          ))}
+        </div>
+        <div className="stats-charts-grid">
+          <div className="card skeleton" style={{ height: 340 }} />
+          <div className="card skeleton" style={{ height: 340 }} />
+        </div>
+      </section>
+    );
+  }
 
   return (
-    <section style={{ display: "flex", flexDirection: "column", gap: 32 }}>
+    <section className="stats-page">
 
-      {/* Top 10 ouvrages */}
-      <div className="card">
-        <div className="card-header">
-          <div style={{ fontSize: 15, fontWeight: 700, display: "flex", alignItems: "center", gap: 8, color: "var(--bleu-nuit)" }}>
-            <span className="material-symbols-rounded" style={{ fontSize: 20, color: "var(--or)" }}>emoji_events</span>
-            Top 10 ouvrages les plus empruntés
+      {/* KPIs */}
+      {dash && (
+        <div className="stats-kpi-grid">
+          <div className="stats-kpi-card">
+            <span className="material-symbols-rounded stats-kpi-icon" style={{ color: "var(--or)" }}>auto_stories</span>
+            <div>
+              <div className="stats-kpi-value">{dash.totalOuvrages}</div>
+              <div className="stats-kpi-label">Ouvrages</div>
+            </div>
           </div>
-          <div style={{ fontSize: 12, color: "var(--gris-doux)", marginTop: 2 }}>
-            Calculé par agrégation MongoDB sur la collection <span style={{ fontFamily: "var(--font-mono)", color: "var(--or)" }}>emprunts</span>.
+          <div className="stats-kpi-card">
+            <span className="material-symbols-rounded stats-kpi-icon" style={{ color: "var(--bleu-accent)" }}>import_contacts</span>
+            <div>
+              <div className="stats-kpi-value">{dash.totalEmpruntsEnCours}</div>
+              <div className="stats-kpi-label">Emprunts en cours</div>
+            </div>
+          </div>
+          <div className="stats-kpi-card">
+            <span className="material-symbols-rounded stats-kpi-icon" style={{ color: "var(--vert-clair)" }}>inventory_2</span>
+            <div>
+              <div className="stats-kpi-value">{exDispos}<span className="stats-kpi-sub">/{exTotal}</span></div>
+              <div className="stats-kpi-label">Exemplaires disponibles</div>
+            </div>
+          </div>
+          <div className="stats-kpi-card">
+            <span className="material-symbols-rounded stats-kpi-icon" style={{ color: dash.totalRetards > 0 ? "var(--rouge-clair)" : "var(--gris-doux)" }}>warning</span>
+            <div>
+              <div className="stats-kpi-value" style={{ color: dash.totalRetards > 0 ? "var(--rouge-clair)" : undefined }}>{dash.totalRetards}</div>
+              <div className="stats-kpi-label">Retards</div>
+            </div>
           </div>
         </div>
-        <div className="card-body">
-          {loading
-            ? Array.from({ length: 10 }).map((_, i) => (
-              <div key={i} style={{ display: "flex", gap: 12, alignItems: "center", padding: "14px 0", borderBottom: i < 9 ? "1px solid var(--border)" : "none" }}>
-                <div className="skeleton" style={{ width: 28, height: 28, borderRadius: "50%" }} />
-                <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
-                  <div className="skeleton" style={{ height: 14, width: `${60 + i * 3}%` }} />
-                  <div className="skeleton" style={{ height: 8, width: `${20 + (10 - i) * 8}%` }} />
-                </div>
-                <div className="skeleton" style={{ width: 40, height: 18 }} />
-              </div>
-            ))
-            : top.length === 0
-            ? <div className="empty-state">
-                <div className="empty-state-icon"><span className="material-symbols-rounded" style={{ fontSize: 56 }}>insert_chart</span></div>
-                <div className="empty-state-title">Aucune donnée</div>
-                <div className="empty-state-sub">Lancez le seed du backend pour alimenter les statistiques.</div>
-              </div>
-            : top.map((o, i) => (
-              <div key={o.ouvrageId} style={{
-                display: "flex", alignItems: "center", gap: 14,
-                padding: "14px 0",
-                borderBottom: i < top.length - 1 ? "1px solid rgba(201,168,76,0.06)" : "none",
-              }}>
-                {/* Rang */}
-                <div style={{
-                  width: 32, height: 32, borderRadius: "50%", flexShrink: 0,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: i < 3 ? 18 : 12,
-                  background: i < 3 ? "rgba(201,168,76,0.12)" : "var(--surface-2)",
-                  color: i < 3 ? "var(--or)" : "var(--gris-doux)",
-                  fontFamily: "var(--font-mono)",
-                  fontWeight: 700,
-                  border: i < 3 ? "1px solid rgba(201,168,76,0.2)" : "1px solid var(--border)",
-                }}>
-                  {i < 3 ? MEDALS[i] : String(i + 1).padStart(2, "0")}
-                </div>
+      )}
 
-                {/* Infos */}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: 14, color: "var(--ivoire)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {o.titre}
-                  </div>
-                  <div style={{ fontSize: 12, color: "var(--gris-doux)", marginTop: 2 }}>
-                    {o.auteur}
-                    {o.categorie && <span style={{ marginLeft: 8, color: "var(--or)", fontWeight: 600 }}>· {o.categorie}</span>}
-                  </div>
-                  {/* Barre */}
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
-                    <div className="progress-bar-track" style={{ height: 6 }}>
-                      <div
-                        className="progress-bar-fill"
-                        style={{
-                          width: `${(o.totalEmprunts / maxTop) * 100}%`,
-                          background: i === 0
-                            ? "linear-gradient(90deg, #C9A84C, #E8C96A)"
-                            : i === 1
-                            ? "linear-gradient(90deg, #9CA3AF, #D1D5DB)"
-                            : i === 2
-                            ? "linear-gradient(90deg, #CD7F32, #E8A96A)"
-                            : "linear-gradient(90deg, var(--bleu-clair), var(--bleu-accent))",
-                        }}
-                      />
-                    </div>
-                    <span style={{ fontFamily: "var(--font-mono)", fontSize: 13, fontWeight: 700, color: "var(--or-clair)", flexShrink: 0 }}>
-                      {o.totalEmprunts} emprunt{o.totalEmprunts > 1 ? "s" : ""}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            ))}
+      {/* Donuts */}
+      <div className="stats-charts-grid">
+        <div className="card stats-chart-card">
+          <div className="card-header">
+            <div className="stats-chart-title">
+              <span className="material-symbols-rounded" style={{ color: "var(--bleu-accent)" }}>donut_large</span>
+              Répartition par catégorie
+            </div>
+            <p className="stats-chart-sub">Agrégation <code>$lookup</code> + <code>$group</code></p>
+          </div>
+          <div className="card-body stats-donut-layout">
+            {cats.length === 0 ? (
+              <div className="empty-state"><div className="empty-state-title">Aucune donnée</div></div>
+            ) : (
+              <>
+                <DonutChart
+                  data={catDonutData}
+                  centerLabel={totalEmpruntsCats}
+                  centerSub="emprunts"
+                />
+                <ul className="chart-legend">
+                  {catDonutData.map((d) => (
+                    <li key={d.key} className="chart-legend-item">
+                      <span className="chart-legend-dot" style={{ background: d.color }} />
+                      <span className="chart-legend-label">{d.label}</span>
+                      <span className="chart-legend-val">{d.value}</span>
+                      <span className="chart-legend-pct">{Math.round((d.value / totalEmpruntsCats) * 100)}%</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="card stats-chart-card">
+          <div className="card-header">
+            <div className="stats-chart-title">
+              <span className="material-symbols-rounded" style={{ color: "var(--vert-clair)" }}>pie_chart</span>
+              État du fonds documentaire
+            </div>
+            <p className="stats-chart-sub">Exemplaires disponibles vs occupés</p>
+          </div>
+          <div className="card-body stats-donut-layout">
+            {exTotal === 0 ? (
+              <div className="empty-state"><div className="empty-state-title">Aucun exemplaire</div></div>
+            ) : (
+              <>
+                <DonutChart
+                  data={stockDonutData}
+                  centerLabel={`${Math.round((exDispos / exTotal) * 100)}%`}
+                  centerSub="disponibles"
+                />
+                <ul className="chart-legend">
+                  {stockDonutData.map((d) => (
+                    <li key={d.key} className="chart-legend-item">
+                      <span className="chart-legend-dot" style={{ background: d.color }} />
+                      <span className="chart-legend-label">{d.label}</span>
+                      <span className="chart-legend-val">{d.value}</span>
+                      <span className="chart-legend-pct">{Math.round((d.value / exTotal) * 100)}%</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Top catégories */}
-      <div className="card">
-        <div className="card-header">
-          <div style={{ fontSize: 15, fontWeight: 700, display: "flex", alignItems: "center", gap: 8, color: "var(--bleu-nuit)" }}>
-            <span className="material-symbols-rounded" style={{ fontSize: 20, color: "var(--bleu-accent)" }}>folder_open</span>
-            Emprunts par catégorie
+      {/* Top 5 donut + burger top 10 */}
+      <div className="stats-charts-grid stats-charts-grid--wide">
+        <div className="card stats-chart-card">
+          <div className="card-header">
+            <div className="stats-chart-title">
+              <span className="material-symbols-rounded" style={{ color: "var(--or)" }}>emoji_events</span>
+              Part des ouvrages les plus lus
+            </div>
+            <p className="stats-chart-sub">Top 5 du classement (agrégation MongoDB)</p>
           </div>
-          <div style={{ fontSize: 12, color: "var(--gris-doux)", marginTop: 2 }}>
-            Agrégation avec <span style={{ fontFamily: "var(--font-mono)", color: "var(--or)" }}>$lookup</span> sur la collection ouvrages.
+          <div className="card-body stats-donut-layout stats-donut-layout--compact">
+            {top.length === 0 ? (
+              <div className="empty-state"><div className="empty-state-title">Aucune donnée</div></div>
+            ) : (
+              <>
+                <DonutChart data={top5DonutData} size={200} thickness={26} centerLabel={totalTopEmprunts} centerSub="total top 10" />
+                <ul className="chart-legend chart-legend--compact">
+                  {top5DonutData.map((d, i) => (
+                    <li key={d.key} className="chart-legend-item">
+                      <span className="chart-legend-rank">{i < 3 ? MEDALS[i] : `${i + 1}.`}</span>
+                      <span className="chart-legend-dot" style={{ background: d.color }} />
+                      <span className="chart-legend-label" title={d.label}>{d.label}</span>
+                      <span className="chart-legend-val">{d.value}</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
           </div>
         </div>
+
+        <div className="card stats-chart-card">
+          <div className="card-header">
+            <div className="stats-chart-title">
+              <span className="material-symbols-rounded" style={{ color: "var(--bleu-accent)" }}>bar_chart</span>
+              Top 10 — barres de classement
+            </div>
+            <p className="stats-chart-sub">Volume d'emprunts par ouvrage</p>
+          </div>
+          <div className="card-body">
+            {top.length === 0 ? (
+              <div className="empty-state"><div className="empty-state-title">Aucune donnée</div></div>
+            ) : (
+              <BurgerBars items={burgerTop} valueKey="value" labelKey="label" subKey="sub" />
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Burger catégories pleine largeur */}
+      <div className="card stats-chart-card">
+        <div className="card-header">
+          <div className="stats-chart-title">
+            <span className="material-symbols-rounded" style={{ color: "var(--or-clair)" }}>folder_open</span>
+            Emprunts par catégorie — vue barres
+          </div>
+          <p className="stats-chart-sub">Comparaison visuelle des catégories les plus empruntées</p>
+        </div>
         <div className="card-body">
-          {loading
-            ? Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} style={{ display: "flex", gap: 12, alignItems: "center", padding: "12px 0", borderBottom: i < 4 ? "1px solid var(--border)" : "none" }}>
-                <div className="skeleton" style={{ width: "25%", height: 14 }} />
-                <div className="skeleton" style={{ flex: 1, height: 10 }} />
-                <div className="skeleton" style={{ width: 30, height: 14 }} />
-              </div>
-            ))
-            : cats.length === 0
-            ? <div className="empty-state">
-                <div className="empty-state-icon"><span className="material-symbols-rounded" style={{ fontSize: 48 }}>folder_open</span></div>
-                <div className="empty-state-title">Aucune donnée</div>
-              </div>
-            : cats.map((c, i) => (
-              <div key={c.categorie} style={{
-                display: "flex", alignItems: "center", gap: 14,
-                padding: "12px 0",
-                borderBottom: i < cats.length - 1 ? "1px solid rgba(201,168,76,0.06)" : "none",
-              }}>
-                <div style={{
-                  width: 140, fontSize: 13, fontWeight: 600,
-                  color: "var(--gris-fonce)", flexShrink: 0,
-                  whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-                }}>
-                  {c.categorie ?? "Non classé"}
-                </div>
-                <div className="progress-bar-track">
-                  <div
-                    className="progress-bar-fill"
-                    style={{
-                      width: `${(c.totalEmprunts / maxCats) * 100}%`,
-                      background: `linear-gradient(90deg, hsl(${(i * 47 + 200) % 360}, 65%, 55%), hsl(${(i * 47 + 220) % 360}, 75%, 65%))`,
-                    }}
-                  />
-                </div>
-                <span style={{ fontFamily: "var(--font-mono)", fontSize: 13, fontWeight: 700, color: "var(--or-clair)", flexShrink: 0, minWidth: 30, textAlign: "right" }}>
-                  {c.totalEmprunts}
-                </span>
-              </div>
-            ))}
+          {cats.length === 0 ? (
+            <div className="empty-state"><div className="empty-state-title">Aucune donnée</div></div>
+          ) : (
+            <BurgerBars items={burgerCats} valueKey="value" labelKey="label" />
+          )}
         </div>
       </div>
 

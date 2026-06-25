@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, Fragment } from "react";
 import { api } from "../api.js";
 import Badge from "../components/Badge.jsx";
 import Modal from "../components/Modal.jsx";
@@ -17,19 +17,22 @@ const FILTRES = [
 export default function Emprunts({ user }) {
   const [data, setData]           = useState({ emprunts: [], total: 0, pages: 1 });
   const [filtre, setFiltre]       = useState("en_cours");
+  const [recherche, setRecherche] = useState("");
   const [page, setPage]           = useState(1);
   const [loading, setLoading]     = useState(true);
   const [confirmId, setConfirmId] = useState(null); // ID à confirmer pour retour
   const [actionLoading, setActionLoading] = useState(false);
 
-  const charger = async (f = filtre, p = page) => {
+  const charger = async (f = filtre, p = page, q = recherche) => {
     setLoading(true);
     try {
-      const params = f === "retard"
-        ? { retard: true, page: p, limit: 30 }
+      const base = f === "retard"
+        ? { retard: true }
         : f
-        ? { statut: f, page: p, limit: 30 }
-        : { page: p, limit: 30 };
+        ? { statut: f }
+        : {};
+      const params = { ...base, page: p, limit: 30 };
+      if (q && q.trim()) params.q = q.trim();
       const res = await api.emprunts(params);
       // Compatibilité si le backend retourne un tableau direct (ancien format)
       if (Array.isArray(res)) {
@@ -44,9 +47,15 @@ export default function Emprunts({ user }) {
     }
   };
 
-  useEffect(() => { charger(filtre, 1); setPage(1); }, [filtre]);
+  useEffect(() => { charger(filtre, 1, recherche); setPage(1); }, [filtre]);
 
-  const changerPage = (p) => { setPage(p); charger(filtre, p); };
+  // Recherche débouncée : relance après 350 ms d'inactivité
+  useEffect(() => {
+    const t = setTimeout(() => { charger(filtre, 1, recherche); setPage(1); }, 350);
+    return () => clearTimeout(t);
+  }, [recherche]);
+
+  const changerPage = (p) => { setPage(p); charger(filtre, p, recherche); };
 
   const confirmerRetour = async () => {
     setActionLoading(true);
@@ -81,8 +90,28 @@ export default function Emprunts({ user }) {
           ))}
         </div>
         <div className="toolbar-right">
+          <div className="search-input-wrapper">
+            <span className="material-symbols-rounded search-icon">search</span>
+            <input
+              type="text"
+              className="form-input"
+              placeholder="Rechercher ouvrage, adhérent, exemplaire…"
+              value={recherche}
+              onChange={(e) => setRecherche(e.target.value)}
+            />
+            {recherche && (
+              <button
+                type="button"
+                className="search-clear"
+                onClick={() => setRecherche("")}
+                title="Effacer"
+              >
+                <span className="material-symbols-rounded" style={{ fontSize: 18 }}>close</span>
+              </button>
+            )}
+          </div>
           {!loading && (
-            <span style={{ fontSize: 12, color: "var(--gris-doux)", alignSelf: "center" }}>
+            <span style={{ fontSize: 12, color: "var(--gris-doux)", alignSelf: "center", whiteSpace: "nowrap" }}>
               {data.total} emprunt{data.total > 1 ? "s" : ""}
             </span>
           )}
@@ -112,7 +141,9 @@ export default function Emprunts({ user }) {
                     <div className="empty-state">
                       <div className="empty-state-icon"><span className="material-symbols-rounded" style={{ fontSize: 48 }}>library_books</span></div>
                       <div className="empty-state-title">Aucun emprunt</div>
-                      <div className="empty-state-sub">Aucun résultat pour ce filtre.</div>
+                      <div className="empty-state-sub">
+                        {recherche ? `Aucun résultat pour « ${recherche} ».` : "Aucun résultat pour ce filtre."}
+                      </div>
                     </div>
                   </td>
                 </tr>
@@ -175,18 +206,17 @@ export default function Emprunts({ user }) {
           {Array.from({ length: data.pages }, (_, i) => i + 1)
             .filter((p) => p === 1 || p === data.pages || Math.abs(p - page) <= 1)
             .map((p, i, arr) => (
-              <>
+              <Fragment key={p}>
                 {i > 0 && arr[i - 1] !== p - 1 && (
-                  <span key={`sep-${p}`} style={{ color: "var(--gris-doux)" }}>…</span>
+                  <span style={{ color: "var(--gris-doux)" }}>…</span>
                 )}
                 <button
-                  key={p}
                   className={`btn btn-sm ${p === page ? "btn-primary" : "btn-ghost"}`}
                   onClick={() => changerPage(p)}
                 >
                   {p}
                 </button>
-              </>
+              </Fragment>
             ))}
           <button className="btn btn-ghost btn-sm" onClick={() => changerPage(page + 1)} disabled={page === data.pages}>
             Suiv. →

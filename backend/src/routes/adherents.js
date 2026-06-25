@@ -18,7 +18,11 @@ router.get("/", adminOnly, async (req, res, next) => {
         { matricule: new RegExp(req.query.q, "i") },
       ];
     }
-    const adherents = await Adherent.find(filtre).sort({ nom: 1 });
+    // La carte (base64) est exclue de la liste pour l'alléger ; on la charge
+    // à la demande via GET /api/adherents/:id (modal de vérification).
+    const adherents = await Adherent.find(filtre)
+      .select("-mot_de_passe -carte")
+      .sort({ nom: 1 });
     res.json(adherents);
   } catch (e) { next(e); }
 });
@@ -29,7 +33,7 @@ router.get("/:id", async (req, res, next) => {
     if (req.user.role !== "admin" && req.user.id !== req.params.id) {
       return res.status(403).json({ erreur: "Accès refusé" });
     }
-    const adherent = await Adherent.findById(req.params.id);
+    const adherent = await Adherent.findById(req.params.id).select("-mot_de_passe");
     if (!adherent) return res.status(404).json({ erreur: "Adhérent introuvable" });
     res.json(adherent);
   } catch (e) { next(e); }
@@ -81,7 +85,23 @@ router.put("/:id/valider", adminOnly, async (req, res, next) => {
   try {
     const adherent = await Adherent.findByIdAndUpdate(
       req.params.id,
-      { $set: { statut: "actif" } },
+      { $set: { statut: "actif", motifRefus: null } },
+      { new: true }
+    );
+    if (!adherent) return res.status(404).json({ erreur: "Adhérent introuvable" });
+    res.json(adherent);
+  } catch (e) { next(e); }
+});
+
+// ── PUT /api/adherents/:id/refuser — Refuser une demande d'inscription (Admin) ─
+// Le compte est conservé avec le statut "refuse" pour pouvoir informer
+// l'utilisateur lors de sa prochaine tentative de connexion.
+router.put("/:id/refuser", adminOnly, async (req, res, next) => {
+  try {
+    const motif = (req.body?.motif || "").trim();
+    const adherent = await Adherent.findByIdAndUpdate(
+      req.params.id,
+      { $set: { statut: "refuse", motifRefus: motif || null } },
       { new: true }
     );
     if (!adherent) return res.status(404).json({ erreur: "Adhérent introuvable" });
@@ -95,10 +115,15 @@ router.put("/:id", async (req, res, next) => {
     if (req.user.role !== "admin" && req.user.id !== req.params.id) {
       return res.status(403).json({ erreur: "Accès refusé" });
     }
-    const { nom, prenom, type, email } = req.body;
+    const { nom, prenom, type, email, role } = req.body;
+    const maj = { nom, prenom, type, email };
+    // Seul un admin peut changer le rôle (empêche l'auto-promotion d'un membre).
+    if (req.user.role === "admin" && (role === "admin" || role === "membre")) {
+      maj.role = role;
+    }
     const adherent = await Adherent.findByIdAndUpdate(
       req.params.id,
-      { $set: { nom, prenom, type, email } },
+      { $set: maj },
       { new: true, runValidators: true }
     );
     if (!adherent) return res.status(404).json({ erreur: "Adhérent introuvable" });

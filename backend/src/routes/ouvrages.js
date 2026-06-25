@@ -2,6 +2,7 @@ import { Router } from "express";
 import Ouvrage from "../models/Ouvrage.js";
 import Emprunt from "../models/Emprunt.js";
 import { adminOnly } from "../middlewares/role.js";
+import { toObjectId, resolveAdherent, adherentIdEffectif } from "../utils/adherent.js";
 
 const router = Router();
 
@@ -140,8 +141,15 @@ router.delete("/:id/exemplaires/:code", adminOnly, async (req, res, next) => {
 // POST /api/ouvrages/:id/exemplaires/:code/reserver  { adherentId }
 router.post("/:id/exemplaires/:code/reserver", async (req, res, next) => {
   try {
-    const { adherentId } = req.body;
-    if (!adherentId) return res.status(400).json({ erreur: "adherentId requis" });
+    const rawId = adherentIdEffectif(req);
+    const adherentObjId = toObjectId(rawId);
+    if (!adherentObjId) return res.status(400).json({ erreur: "adherentId invalide" });
+
+    const adherent = await resolveAdherent(rawId);
+    if (!adherent) return res.status(404).json({ erreur: "Adhérent introuvable" });
+    if (adherent.statut !== "actif") {
+      return res.status(403).json({ erreur: "Compte inactif — réservation impossible." });
+    }
 
     const ouvrage = await Ouvrage.findOneAndUpdate(
       {
@@ -150,8 +158,8 @@ router.post("/:id/exemplaires/:code/reserver", async (req, res, next) => {
       },
       {
         $set: {
-          "exemplaires.$.statut":    "reserve",
-          "exemplaires.$.reservePar": adherentId,
+          "exemplaires.$.statut":     "reserve",
+          "exemplaires.$.reservePar": adherentObjId,
           "exemplaires.$.reserveLe":  new Date(),
         },
         $inc: { nbDisponibles: -1 },
@@ -161,7 +169,7 @@ router.post("/:id/exemplaires/:code/reserver", async (req, res, next) => {
 
     if (!ouvrage) {
       return res.status(409).json({
-        erreur: "Exemplaire indisponible : déjà réservé ou emprunté par un autre adhérent.",
+        erreur: "Exemplaire indisponible : déjà réservé ou emprunté.",
       });
     }
     res.json(ouvrage);
@@ -171,12 +179,15 @@ router.post("/:id/exemplaires/:code/reserver", async (req, res, next) => {
 // ── POST /api/ouvrages/:id/exemplaires/:code/annuler-reservation ─────────────
 router.post("/:id/exemplaires/:code/annuler-reservation", async (req, res, next) => {
   try {
-    const { adherentId } = req.body;
+    const rawId = adherentIdEffectif(req);
+    const adherentObjId = toObjectId(rawId);
+    if (!adherentObjId) return res.status(400).json({ erreur: "adherentId invalide" });
+
     const ouvrage = await Ouvrage.findOneAndUpdate(
       {
         _id: req.params.id,
         exemplaires: {
-          $elemMatch: { code: req.params.code, statut: "reserve", reservePar: adherentId },
+          $elemMatch: { code: req.params.code, statut: "reserve", reservePar: adherentObjId },
         },
       },
       {

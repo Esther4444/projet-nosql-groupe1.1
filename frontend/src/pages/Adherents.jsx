@@ -20,7 +20,14 @@ export default function Adherents() {
   const [historique, setHistorique]     = useState(null); // { adherent, emprunts }
   const [histLoading, setHistLoading]   = useState(false);
   const [confirmDel, setConfirmDel]     = useState(null);
+  const [editAdherent, setEditAdherent]   = useState(null);
+  const [editForm, setEditForm]           = useState({ nom: "", prenom: "", type: "etudiant", email: "", role: "membre" });
+  const [verif, setVerif]                 = useState(null);   // adhérent en cours de vérification (liste)
+  const [verifFull, setVerifFull]         = useState(null);   // détail complet (avec carte)
+  const [verifLoading, setVerifLoading]   = useState(false);
+  const [motifRefus, setMotifRefus]       = useState("");
   const [recherche, setRecherche]       = useState("");
+  const [filtreStatut, setFiltreStatut] = useState("tous"); // tous | inactif | actif
 
   const [adherents, setAdherents]       = useState([]);
   const [loading, setLoading]           = useState(true);
@@ -72,6 +79,45 @@ export default function Adherents() {
     }
   };
 
+  // Ouvre le dossier de vérification : charge le détail complet (avec la carte).
+  const ouvrirVerification = async (a) => {
+    setVerif(a);
+    setVerifFull(null);
+    setMotifRefus(a.motifRefus ?? "");
+    setVerifLoading(true);
+    try {
+      const full = await api.adherent(a._id);
+      setVerifFull(full);
+    } catch (e) {
+      toast(e.message, "erreur");
+    } finally {
+      setVerifLoading(false);
+    }
+  };
+
+  const fermerVerif = () => { setVerif(null); setVerifFull(null); setMotifRefus(""); };
+
+  const validerDepuisVerif = async () => {
+    await validerCompte(verif);
+    fermerVerif();
+  };
+
+  // Refus : le compte est conservé (statut "refuse") afin que l'utilisateur
+  // soit informé du refus lors de sa prochaine tentative de connexion.
+  const refuserDemande = async () => {
+    setActionLoading(true);
+    try {
+      await api.refuserAdherent(verif._id, motifRefus.trim());
+      await chargerAdherents();
+      fermerVerif();
+      toast(`Demande de ${verif.prenom} ${verif.nom} refusée.`, "succes");
+    } catch (e) {
+      toast(e.message, "erreur");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const voirHistorique = async (a) => {
     setHistLoading(true);
     setHistorique({ adherent: a, emprunts: [] });
@@ -100,7 +146,43 @@ export default function Adherents() {
     }
   };
 
+  const ouvrirModifier = (a) => {
+    setEditForm({
+      nom: a.nom ?? "",
+      prenom: a.prenom ?? "",
+      type: a.type ?? "etudiant",
+      email: a.email ?? "",
+      role: a.role ?? "membre",
+    });
+    setEditAdherent(a);
+  };
+
+  const sauverModification = async () => {
+    if (!editForm.nom || !editForm.prenom) {
+      toast("Nom et prénom sont obligatoires.", "erreur");
+      return;
+    }
+    setActionLoading(true);
+    try {
+      await api.majAdherent(editAdherent._id, editForm);
+      await chargerAdherents();
+      setEditAdherent(null);
+      toast(`Profil de ${editForm.prenom} ${editForm.nom} mis à jour.`, "succes");
+    } catch (e) {
+      toast(e.message, "erreur");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const majEdit = (k) => (e) => setEditForm({ ...editForm, [k]: e.target.value });
+
+  const nbEnAttente = adherents.filter((a) => a.statut === "inactif").length;
+  const nbRefuse    = adherents.filter((a) => a.statut === "refuse").length;
+  const nbActif     = adherents.filter((a) => a.statut === "actif").length;
+
   const filtres = adherents.filter((a) => {
+    if (filtreStatut !== "tous" && a.statut !== filtreStatut) return false;
     if (!recherche) return true;
     const q = recherche.toLowerCase();
     return (
@@ -113,6 +195,21 @@ export default function Adherents() {
 
   return (
     <section>
+      {/* Bandeau alerte : comptes en attente de validation */}
+      {nbEnAttente > 0 && filtreStatut !== "inactif" && (
+        <button
+          type="button"
+          className="alerte-attente"
+          onClick={() => setFiltreStatut("inactif")}
+        >
+          <span className="material-symbols-rounded" style={{ fontSize: 20 }}>pending_actions</span>
+          <span>
+            <strong>{nbEnAttente}</strong> demande{nbEnAttente > 1 ? "s" : ""} d'inscription en attente de vérification
+          </span>
+          <span className="alerte-attente-cta">Voir <span className="material-symbols-rounded" style={{ fontSize: 16 }}>arrow_forward</span></span>
+        </button>
+      )}
+
       {/* Toolbar */}
       <div className="toolbar">
         <div className="search-input-wrapper">
@@ -126,14 +223,37 @@ export default function Adherents() {
           />
         </div>
         <div className="toolbar-right">
-          <span style={{ fontSize: 12, color: "var(--gris-doux)", alignSelf: "center" }}>
-            {adherents.length} adhérent{adherents.length > 1 ? "s" : ""}
-          </span>
           <button className="btn btn-primary" onClick={() => setShowCreate(true)}>
             <span className="material-symbols-rounded" style={{ fontSize: 18 }}>person_add</span>
             Créer un compte
           </button>
         </div>
+      </div>
+
+      {/* Filtres par statut */}
+      <div className="filtre-pills">
+        {[
+          { id: "tous", label: "Tous", count: adherents.length },
+          { id: "inactif", label: "En attente", count: nbEnAttente },
+          { id: "actif", label: "Actifs", count: nbActif },
+          { id: "refuse", label: "Refusés", count: nbRefuse },
+        ].map((f) => (
+          <button
+            key={f.id}
+            type="button"
+            className={`filtre-pill${filtreStatut === f.id ? " active" : ""}${f.id === "inactif" && f.count > 0 ? " pill-attente" : ""}${f.id === "refuse" && f.count > 0 ? " pill-refuse" : ""}`}
+            onClick={() => setFiltreStatut(f.id)}
+          >
+            {f.id === "inactif" && (
+              <span className="material-symbols-rounded" style={{ fontSize: 15 }}>pending_actions</span>
+            )}
+            {f.id === "refuse" && (
+              <span className="material-symbols-rounded" style={{ fontSize: 15 }}>block</span>
+            )}
+            {f.label}
+            <span className="filtre-pill-count">{f.count}</span>
+          </button>
+        ))}
       </div>
 
       {/* Tableau */}
@@ -158,7 +278,15 @@ export default function Adherents() {
                       <div className="empty-state-icon"><span className="material-symbols-rounded" style={{ fontSize: 48 }}>group_off</span></div>
                       <div className="empty-state-title">Aucun adhérent</div>
                       <div className="empty-state-sub">
-                        {recherche ? "Aucun résultat pour cette recherche." : "Créez le premier adhérent."}
+                        {recherche
+                          ? "Aucun résultat pour cette recherche."
+                          : filtreStatut === "inactif"
+                            ? "Aucune demande en attente de validation."
+                            : filtreStatut === "actif"
+                              ? "Aucun compte actif."
+                              : filtreStatut === "refuse"
+                                ? "Aucune demande refusée."
+                                : "Créez le premier adhérent."}
                       </div>
                     </div>
                   </td>
@@ -196,13 +324,17 @@ export default function Adherents() {
                       <span className="material-symbols-rounded" style={{ fontSize: 14 }}>
                         {a.role === "admin" ? "admin_panel_settings" : a.type === "enseignant" ? "school" : "face"}
                       </span>
-                      {a.role === "admin" ? "Admin" : a.type === "enseignant" ? "Enseignant" : "Étudiant"}
+                      {a.role === "admin" ? "Bibliothécaire" : a.type === "enseignant" ? "Enseignant" : "Étudiant"}
                     </span>
                   </td>
                   <td>
                     {a.statut === "inactif" ? (
                       <span style={{ fontSize: 11, fontWeight: 700, color: "var(--ambre-clair)", background: "rgba(245,158,11,0.15)", padding: "3px 8px", borderRadius: "var(--radius-md)", display: "inline-flex", alignItems: "center", gap: 4 }}>
                         <span className="material-symbols-rounded" style={{ fontSize: 14 }}>pending_actions</span> En attente
+                      </span>
+                    ) : a.statut === "refuse" ? (
+                      <span title={a.motifRefus || "Demande refusée"} style={{ fontSize: 11, fontWeight: 700, color: "var(--rouge-clair, #f87171)", background: "rgba(239,68,68,0.15)", padding: "3px 8px", borderRadius: "var(--radius-md)", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        <span className="material-symbols-rounded" style={{ fontSize: 14 }}>block</span> Refusé
                       </span>
                     ) : (
                       <span style={{ fontSize: 11, fontWeight: 700, color: "var(--vert-clair)", background: "rgba(34,197,94,0.15)", padding: "3px 8px", borderRadius: "var(--radius-md)", display: "inline-flex", alignItems: "center", gap: 4 }}>
@@ -212,16 +344,26 @@ export default function Adherents() {
                   </td>
                   <td>
                     <div style={{ display: "flex", gap: 6 }}>
-                      {a.statut === "inactif" && (
+                      {(a.statut === "inactif" || a.statut === "refuse") && (
                         <button
-                          className="btn btn-primary btn-sm btn-icon"
-                          onClick={() => validerCompte(a)}
-                          title="Activer le compte"
+                          className="btn btn-primary btn-sm"
+                          onClick={() => ouvrirVerification(a)}
+                          title={a.statut === "refuse" ? "Revoir le dossier" : "Vérifier le dossier et activer"}
                           disabled={actionLoading}
+                          style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
                         >
-                          <span className="material-symbols-rounded" style={{ fontSize: 18 }}>how_to_reg</span>
+                          <span className="material-symbols-rounded" style={{ fontSize: 18 }}>fact_check</span>
+                          {a.statut === "refuse" ? "Revoir" : "Vérifier"}
                         </button>
                       )}
+                      <button
+                        className="btn btn-ghost btn-sm btn-icon"
+                        onClick={() => ouvrirModifier(a)}
+                        title="Modifier"
+                        disabled={actionLoading}
+                      >
+                        <span className="material-symbols-rounded" style={{ fontSize: 18 }}>edit</span>
+                      </button>
                       <button
                         className="btn btn-ghost btn-sm btn-icon"
                         onClick={() => voirHistorique(a)}
@@ -275,18 +417,20 @@ export default function Adherents() {
             <label className="form-label">Prénom *</label>
             <input className="form-input" value={form.prenom} onChange={maj("prenom")} placeholder="ex. Esther Lydie" />
           </div>
-          <div className="form-group">
-            <label className="form-label">Type *</label>
-            <select className="form-select" value={form.type} onChange={maj("type")}>
+          <div className="form-group" style={{ gridColumn: "1/-1" }}>
+            <label className="form-label">Rôle *</label>
+            <select
+              className="form-select"
+              value={form.role === "admin" ? "admin" : form.type}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === "admin") setForm({ ...form, role: "admin", type: "enseignant" });
+                else setForm({ ...form, role: "membre", type: v });
+              }}
+            >
               <option value="etudiant">Étudiant (prêt 14 j)</option>
               <option value="enseignant">Enseignant (prêt 30 j)</option>
-            </select>
-          </div>
-          <div className="form-group">
-            <label className="form-label">Rôle *</label>
-            <select className="form-select" value={form.role} onChange={maj("role")}>
-              <option value="membre">Membre</option>
-              <option value="admin">Administrateur</option>
+              <option value="admin">Bibliothécaire</option>
             </select>
           </div>
           <div className="form-group" style={{ gridColumn: "1/-1" }}>
@@ -294,6 +438,126 @@ export default function Adherents() {
             <input className="form-input" type="email" value={form.email} onChange={maj("email")} placeholder="ex. e.malemba@uob.ga" />
           </div>
         </div>
+      </Modal>
+
+      {/* ── Modal Vérification du dossier (avant activation) ──────────────── */}
+      <Modal
+        open={Boolean(verif)}
+        onClose={fermerVerif}
+        title={verif ? `Vérifier le dossier — ${verif.prenom} ${verif.nom}` : ""}
+        size="lg"
+        footer={
+          <>
+            <button className="btn btn-ghost" onClick={fermerVerif}>Fermer</button>
+            <button className="btn btn-danger" onClick={refuserDemande} disabled={actionLoading}>
+              <span className="material-symbols-rounded" style={{ fontSize: 16 }}>cancel</span> Refuser la demande
+            </button>
+            <button className="btn btn-primary" onClick={validerDepuisVerif} disabled={actionLoading}>
+              {actionLoading ? <><span className="spinner" /> Activation…</> : <><span className="material-symbols-rounded" style={{ fontSize: 16 }}>how_to_reg</span> Valider et activer</>}
+            </button>
+          </>
+        }
+      >
+        {verif && (
+          <div className="verif-layout">
+            <div className="verif-infos">
+              <div className="verif-row"><span className="verif-key">Matricule</span><span className="verif-val td-mono">{verif.matricule}</span></div>
+              <div className="verif-row"><span className="verif-key">Nom complet</span><span className="verif-val">{verif.prenom} {verif.nom}</span></div>
+              <div className="verif-row"><span className="verif-key">Profil</span><span className="verif-val">{TYPE_LABELS[verif.type] ?? verif.type}</span></div>
+              <div className="verif-row"><span className="verif-key">Email</span><span className="verif-val">{verif.email || "Non renseigné"}</span></div>
+              <p className="verif-note">
+                <span className="material-symbols-rounded" style={{ fontSize: 16 }}>info</span>
+                Vérifiez que la carte correspond bien aux informations ci-dessus avant d'activer le compte.
+              </p>
+              <div className="form-group" style={{ marginTop: 4 }}>
+                <label className="form-label">Motif de refus (optionnel)</label>
+                <textarea
+                  className="form-input"
+                  rows={2}
+                  placeholder="Ex : carte illisible, informations non concordantes…"
+                  value={motifRefus}
+                  onChange={(e) => setMotifRefus(e.target.value)}
+                />
+                <span style={{ fontSize: 11, color: "var(--gris-doux)" }}>
+                  Ce message sera affiché à l'utilisateur s'il tente de se connecter après un refus.
+                </span>
+              </div>
+            </div>
+            <div className="verif-carte">
+              <div className="verif-carte-label">
+                {verif.type === "enseignant" ? "Carte professionnelle" : "Carte étudiant"}
+              </div>
+              {verifLoading ? (
+                <div className="verif-carte-placeholder"><span className="spinner" /></div>
+              ) : verifFull?.carte ? (
+                <a href={verifFull.carte} target="_blank" rel="noopener noreferrer" title="Ouvrir en grand">
+                  <img src={verifFull.carte} alt="Carte justificative" className="verif-carte-img" />
+                </a>
+              ) : (
+                <div className="verif-carte-placeholder verif-carte-vide">
+                  <span className="material-symbols-rounded" style={{ fontSize: 36 }}>image_not_supported</span>
+                  Aucune carte fournie
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* ── Modal Modifier Adhérent ───────────────────────────────────────── */}
+      <Modal
+        open={Boolean(editAdherent)}
+        onClose={() => setEditAdherent(null)}
+        title={editAdherent ? `Modifier — ${editAdherent.prenom} ${editAdherent.nom}` : ""}
+        footer={
+          <>
+            <button className="btn btn-ghost" onClick={() => setEditAdherent(null)}>Annuler</button>
+            <button
+              className="btn btn-primary"
+              onClick={sauverModification}
+              disabled={actionLoading || !editForm.nom || !editForm.prenom}
+            >
+              {actionLoading ? <><span className="spinner" /> Enregistrement…</> : <><span className="material-symbols-rounded" style={{ fontSize: 16 }}>save</span> Enregistrer</>}
+            </button>
+          </>
+        }
+      >
+        {editAdherent && (
+          <div className="form-grid">
+            <div className="form-group" style={{ gridColumn: "1/-1" }}>
+              <label className="form-label">Matricule</label>
+              <input className="form-input" value={editAdherent.matricule} disabled style={{ opacity: 0.7 }} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Nom *</label>
+              <input className="form-input" value={editForm.nom} onChange={majEdit("nom")} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Prénom *</label>
+              <input className="form-input" value={editForm.prenom} onChange={majEdit("prenom")} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Rôle *</label>
+              <select
+                className="form-select"
+                value={editForm.role === "admin" ? "admin" : editForm.type}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === "admin") setEditForm({ ...editForm, role: "admin", type: "enseignant" });
+                  else setEditForm({ ...editForm, role: "membre", type: v });
+                }}
+              >
+                <option value="etudiant">Étudiant (prêt 14 j)</option>
+                <option value="enseignant">Enseignant (prêt 30 j)</option>
+                <option value="admin">Bibliothécaire</option>
+              </select>
+            </div>
+            <div className="form-group" style={{ gridColumn: "1/-1" }}>
+              <label className="form-label">Email</label>
+              <input className="form-input" type="email" value={editForm.email} onChange={majEdit("email")} placeholder="ex. e.malemba@uob.ga" />
+            </div>
+          </div>
+        )}
       </Modal>
 
       {/* ── Modal Historique des emprunts ────────────────────────────────── */}

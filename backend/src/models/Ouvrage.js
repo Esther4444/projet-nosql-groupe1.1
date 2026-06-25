@@ -24,6 +24,7 @@ const ouvrageSchema = new mongoose.Schema({
   isbn: String,
   annee: Number,
   categorie: String,
+  description: String,
   // Compteurs dénormalisés (pattern "computed"), maintenus via $inc
   nbDisponibles: { type: Number, default: 0 },
   totalEmprunts: { type: Number, default: 0 },

@@ -56,6 +56,31 @@ biblio-uob/
 | POST | `/api/emprunts/:id/retour` | Retour : statut → disponible, `nbDisponibles +1` |
 | GET | `/api/stats/top-ouvrages` | **Agrégation** : top 10 des plus empruntés |
 
+### Authentification (JWT)
+
+Toutes les routes `/api/*` (sauf `/api/auth/*` et `/api/health`) exigent un token `Authorization: Bearer <token>`.
+
+| Méthode | Route | Rôle |
+|---|---|---|
+| POST | `/api/auth/login` | Connexion (matricule + mot de passe) |
+| POST | `/api/auth/register` | Inscription étudiante (compte inactif en attente) |
+| GET | `/api/auth/me` | Profil de l'utilisateur connecté |
+
+**Comptes de démonstration** (après `npm run seed`, mot de passe : `password123`) :
+
+| Matricule | Rôle | Usage |
+|---|---|---|
+| `ADMIN-001` | Bibliothécaire (admin) | Gestion complète, validation des emprunts |
+| `UOB-ET-2024-101` | Étudiante (membre) | Réservations, consultation de ses emprunts |
+| `UOB-ET-2024-102` | Étudiant (membre) | Idem |
+| `UOB-EN-2019-007` | Enseignant (membre) | Prêt 30 jours |
+
+### Parcours réservation → emprunt
+
+1. **Membre** : réserve un exemplaire disponible depuis le catalogue.
+2. **Bibliothécaire (admin)** : valide l'emprunt au comptoir via « Valider l'emprunt » sur l'exemplaire réservé.
+3. **Retour** : l'admin enregistre le retour dans l'onglet Emprunts → l'exemplaire redevient disponible.
+
 ## 3. Installation et lancement
 
 ### Prérequis
@@ -66,7 +91,7 @@ biblio-uob/
 ```bash
 cd backend
 npm install
-cp .env.example .env        # ajuster MONGODB_URI si Atlas
+cp .env.example .env        # ajuster MONGODB_URI, JWT_SECRET si besoin
 npm run seed                # données de démonstration (ouvrages, adhérents, historique)
 npm run dev                 # API sur http://localhost:4000
 ```
@@ -81,13 +106,13 @@ npm run dev                 # http://localhost:5173 (proxy /api → :4000)
 ## 4. Démonstration des livrables
 
 1. **Modèle de données** → `docs/modele-donnees.md`.
-2. **Top 10** → onglet « Top 10 » de l'interface, ou `curl http://localhost:4000/api/stats/top-ouvrages`.
+2. **Top 10** → onglet « Statistiques » de l'interface, ou `GET /api/stats/top-ouvrages` (avec token admin).
 3. **Statut via `$set` + `$inc`** → routes `emprunts.js` et `ouvrages.js` (chaque changement de statut et son compteur sont mis à jour dans la même opération).
 4. **Emprunt refusé sans disponibilité** → emprunter tous les exemplaires d'un ouvrage dans l'interface, puis réessayer : message « Emprunt refusé : aucun exemplaire disponible » (HTTP 409).
 5. **Défi : anti-double réservation** → lancer le script de concurrence :
 
 ```bash
-# backend démarré + seed effectué
+# backend démarré + seed effectué (le script se connecte en tant qu'admin)
 node test-concurrence.js
 ```
 

@@ -25,17 +25,16 @@ export function SkeletonRow({ cols = 5 }) {
 /** Skeleton pour une carte ouvrage */
 export function SkeletonCard() {
   return (
-    <div className="book-card" style={{ cursor: "default", gap: 12 }} aria-hidden="true">
-      <div className="book-card-top">
-        <Skeleton width="44px" height="56px" radius="4px" />
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
-          <Skeleton height="18px" width="80%" />
-          <Skeleton height="12px" width="55%" />
+    <div className="book-card book-card--v2" style={{ cursor: "default", pointerEvents: "none" }} aria-hidden="true">
+      <Skeleton width="100%" height="88px" radius="0" />
+      <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: 6 }}>
+        <Skeleton height="16px" width="85%" />
+        <Skeleton height="12px" width="55%" />
+        <div style={{ display: "flex", gap: 8 }}>
+          <Skeleton height="22px" width="72px" radius="var(--radius-full)" />
+          <Skeleton height="22px" width="40px" radius="var(--radius-full)" />
         </div>
-      </div>
-      <div style={{ display: "flex", gap: 8 }}>
-        <Skeleton height="20px" width="80px" radius="var(--radius-full)" />
-        <Skeleton height="20px" width="50px" radius="var(--radius-full)" />
+        <Skeleton height="6px" width="100%" radius="var(--radius-full)" />
       </div>
     </div>
   );

@@ -8,9 +8,13 @@ async function call(path, options = {}) {
   const data = await res.json().catch(() => ({}));
   
   if (!res.ok) {
-    if (res.status === 401) {
+    // Session invalide (token expiré, utilisateur supprimé après seed, etc.)
+    if (res.status === 401 || (res.status === 404 && path.startsWith("/auth/"))) {
       localStorage.removeItem("token");
-      window.dispatchEvent(new Event("auth-expired")); // signal global pour App.jsx
+      // Pas de toast au démarrage (vérification silencieuse via /auth/me)
+      if (!path.startsWith("/auth/me")) {
+        window.dispatchEvent(new Event("auth-expired"));
+      }
     }
     throw new Error(data.erreur || `Erreur ${res.status}`);
   }
@@ -73,6 +77,7 @@ export const api = {
   creerAdherent:     (body) => call("/adherents", { method: "POST", body: JSON.stringify(body) }),
   majAdherent:       (id, body) => call(`/adherents/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   validerAdherent:   (id)   => call(`/adherents/${id}/valider`, { method: "PUT" }),
+  refuserAdherent:   (id, motif) => call(`/adherents/${id}/refuser`, { method: "PUT", body: JSON.stringify({ motif }) }),
   supprimerAdherent: (id)   => call(`/adherents/${id}`, { method: "DELETE" }),
 
   // ── Emprunts ─────────────────────────────────────────────────────────────
@@ -81,6 +86,7 @@ export const api = {
     if (params.statut)   q.set("statut",   params.statut);
     if (params.adherent) q.set("adherent", params.adherent);
     if (params.retard)   q.set("retard",   "true");
+    if (params.q)        q.set("q",        params.q);
     if (params.page)     q.set("page",     params.page);
     if (params.limit)    q.set("limit",    params.limit);
     const qs = q.toString();

@@ -10,10 +10,16 @@ const JWT_SECRET = process.env.JWT_SECRET || "supersecretkey_change_me_in_prod";
 // Inscription (pour les étudiants/enseignants)
 router.post("/register", async (req, res) => {
   try {
-    const { matricule, nom, prenom, email, mot_de_passe } = req.body;
+    const { matricule, nom, prenom, email, mot_de_passe, type, carte } = req.body;
     if (!matricule || !nom || !prenom || !mot_de_passe) {
       return res.status(400).json({ erreur: "Veuillez remplir tous les champs obligatoires." });
     }
+    if (!carte || !/^data:image\/(png|jpe?g|webp);base64,/.test(carte)) {
+      return res.status(400).json({
+        erreur: "Veuillez joindre une carte justificative (image) valide.",
+      });
+    }
+    const typeAdherent = type === "enseignant" ? "enseignant" : "etudiant";
 
     const existe = await Adherent.findOne({ matricule });
     if (existe) {
@@ -24,10 +30,11 @@ router.post("/register", async (req, res) => {
     const hash = await bcrypt.hash(mot_de_passe, salt);
 
     const adherent = new Adherent({
-      matricule, nom, prenom, type: "etudiant", email,
+      matricule, nom, prenom, type: typeAdherent, email,
       mot_de_passe: hash,
       role: "membre",
       statut: "inactif",
+      carte,
     });
     await adherent.save();
 
@@ -56,8 +63,16 @@ router.post("/login", async (req, res) => {
       return res.status(401).json({ erreur: "Identifiants incorrects." });
     }
 
+    if (user.statut === "refuse") {
+      return res.status(403).json({
+        erreur: user.motifRefus
+          ? `Votre demande d'inscription a été refusée. Motif : ${user.motifRefus}`
+          : "Votre demande d'inscription a été refusée par l'administrateur.",
+      });
+    }
+
     if (user.statut === "inactif") {
-      return res.status(403).json({ erreur: "Votre compte est inactif ou en attente de validation par un administrateur." });
+      return res.status(403).json({ erreur: "Votre compte est en attente de validation par un administrateur." });
     }
 
     const token = jwt.sign({ id: user._id, role: user.role }, JWT_SECRET, { expiresIn: "1d" });
@@ -71,7 +86,7 @@ router.post("/login", async (req, res) => {
 router.get("/me", auth, async (req, res) => {
   try {
     const user = await Adherent.findById(req.user.id).select("-mot_de_passe");
-    if (!user) return res.status(404).json({ erreur: "Utilisateur non trouvé." });
+    if (!user) return res.status(401).json({ erreur: "Session expirée — reconnectez-vous." });
     res.json(user);
   } catch (e) {
     res.status(500).json({ erreur: "Erreur serveur." });

@@ -13,6 +13,7 @@ const COVER_COLORS = [
 const coverColor = (title = "") => COVER_COLORS[title.charCodeAt(0) % COVER_COLORS.length];
 
 const ETATS = ["neuf", "bon", "use"];
+const userId = (user) => user?._id ?? user?.id;
 
 export default function Catalogue({ user }) {
   const [ouvrages, setOuvrages]     = useState([]);
@@ -24,6 +25,13 @@ export default function Catalogue({ user }) {
   const [selection, setSelection]   = useState(null);
   const [showCreate, setShowCreate] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
+  const [empruntModal, setEmpruntModal] = useState(null); // { exemplaire, adherentId }
+  const [adherents, setAdherents]   = useState([]);
+  const [showEdit, setShowEdit]     = useState(false);
+  const [editForm, setEditForm]     = useState({ titre: "", auteur: "", isbn: "", annee: "", categorie: "", description: "" });
+  const [confirmDeleteOuvrage, setConfirmDeleteOuvrage] = useState(null);
+  const [confirmDeleteEx, setConfirmDeleteEx] = useState(null);
+  const [newExForm, setNewExForm]   = useState({ code: "", etat: "bon" });
 
   // Formulaire de création d'ouvrage
   const [form, setForm] = useState({ titre: "", auteur: "", isbn: "", annee: "", categorie: "", description: "" });
@@ -92,6 +100,113 @@ export default function Catalogue({ user }) {
   const majEx = (i, key, val) =>
     setNewExemplaires((prev) => prev.map((ex, j) => j === i ? { ...ex, [key]: val } : ex));
 
+  const ouvrirEmprunt = async (ex) => {
+    const reservePar = ex.statut === "reserve" && ex.reservePar ? String(ex.reservePar) : "";
+    setEmpruntModal({ exemplaire: ex, adherentId: reservePar });
+    if (user?.role === "admin" && adherents.length === 0) {
+      try {
+        const liste = await api.adherents();
+        setAdherents(liste.filter((a) => a.statut === "actif"));
+      } catch (e) {
+        toast(e.message, "erreur");
+      }
+    }
+  };
+
+  const confirmerEmprunt = async () => {
+    if (!empruntModal?.adherentId) {
+      toast("Sélectionnez l'adhérent emprunteur.", "erreur");
+      return;
+    }
+    setActionLoading(true);
+    try {
+      await api.emprunter(selection._id, empruntModal.adherentId, empruntModal.exemplaire.code);
+      setEmpruntModal(null);
+      await charger();
+      toast(`Emprunt enregistré pour ${empruntModal.exemplaire.code}.`, "succes");
+    } catch (e) {
+      toast(e.message, "erreur");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const ouvrirModifier = (o) => {
+    setEditForm({
+      titre: o.titre ?? "",
+      auteur: o.auteur ?? "",
+      isbn: o.isbn ?? "",
+      annee: o.annee ?? "",
+      categorie: o.categorie ?? "",
+      description: o.description ?? "",
+    });
+    setShowEdit(true);
+  };
+
+  const sauverOuvrage = async () => {
+    if (!editForm.titre || !editForm.auteur) {
+      toast("Titre et auteur sont obligatoires.", "erreur");
+      return;
+    }
+    setActionLoading(true);
+    try {
+      await api.majOuvrage(selection._id, {
+        ...editForm,
+        annee: Number(editForm.annee) || undefined,
+      });
+      setShowEdit(false);
+      await charger();
+      toast(`Ouvrage "${editForm.titre}" mis à jour.`, "succes");
+    } catch (e) {
+      toast(e.message, "erreur");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const supprimerOuvrage = async () => {
+    setActionLoading(true);
+    try {
+      await api.supprimerOuvrage(confirmDeleteOuvrage._id);
+      setConfirmDeleteOuvrage(null);
+      setSelection(null);
+      await charger();
+      toast(`Ouvrage "${confirmDeleteOuvrage.titre}" supprimé.`, "succes");
+    } catch (e) {
+      toast(e.message, "erreur");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const ajouterExemplaire = async () => {
+    if (!newExForm.code.trim()) {
+      toast("Le code de l'exemplaire est requis.", "erreur");
+      return;
+    }
+    await agir(
+      () => api.ajouterExemplaire(selection._id, newExForm),
+      `Exemplaire ${newExForm.code} ajouté.`
+    );
+    setNewExForm({ code: "", etat: "bon" });
+  };
+
+  const retirerExemplaire = async () => {
+    setActionLoading(true);
+    try {
+      await api.supprimerExemplaire(selection._id, confirmDeleteEx);
+      setConfirmDeleteEx(null);
+      await charger();
+      toast(`Exemplaire ${confirmDeleteEx} retiré du catalogue.`, "succes");
+    } catch (e) {
+      toast(e.message, "erreur");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const uid = userId(user);
+
   return (
     <section>
       {/* Toolbar */}
@@ -148,33 +263,73 @@ export default function Catalogue({ user }) {
             </div>
           : ouvrages.map((o) => {
               const [c1, c2] = coverColor(o.titre);
+              const exTotal = o.exemplaires?.length ?? 0;
+              const dispo = o.nbDisponibles ?? 0;
+              const tauxDispo = exTotal > 0 ? Math.round((dispo / exTotal) * 100) : 0;
+              const initials = (o.titre ?? "")
+                .split(/\s+/)
+                .filter(Boolean)
+                .slice(0, 2)
+                .map((w) => w[0])
+                .join("")
+                .toUpperCase() || "?";
+
               return (
                 <button
                   key={o._id}
-                  className="book-card"
+                  className="book-card book-card--v2"
                   onClick={() => setSelection(o)}
                   aria-label={`Ouvrage ${o.titre}`}
                 >
-                  <div className="book-card-top">
+                  <div className="book-card-cover-wrap">
                     <div
-                      className="book-cover"
-                      style={{ background: `linear-gradient(135deg, ${c1}, ${c2})` }}
+                      className="book-cover book-cover--hero"
+                      style={{ background: `linear-gradient(145deg, ${c1} 0%, ${c2} 55%, ${c1} 100%)` }}
                     >
-                      <span className="material-symbols-rounded" style={{ fontSize: 52, color: "rgba(255,255,255,0.85)" }}>auto_stories</span>
+                      <div className="book-cover-shine" aria-hidden="true" />
+                      <div className="book-cover-spine" aria-hidden="true" />
+                      <span className="book-cover-initials">{initials}</span>
+                      <span className="material-symbols-rounded book-cover-watermark">auto_stories</span>
                     </div>
-                    <div className="book-card-info">
-                      <div className="book-title">{o.titre}</div>
-                      <div className="book-author">{o.auteur}</div>
+                    <span className={`book-card-badge${dispo > 0 ? " book-card-badge--ok" : " book-card-badge--nok"}`}>
+                      <span className="material-symbols-rounded" style={{ fontSize: 14 }}>
+                        {dispo > 0 ? "check_circle" : "block"}
+                      </span>
+                      {dispo > 0 ? `${dispo} dispo` : "Complet"}
+                    </span>
+                    <span className="book-card-hover-cta">
+                      <span className="material-symbols-rounded" style={{ fontSize: 18 }}>visibility</span>
+                      Voir détails
+                    </span>
+                  </div>
+
+                  <div className="book-card-content">
+                    <h3 className="book-title">{o.titre}</h3>
+                    <p className="book-author">{o.auteur}</p>
+
+                    <div className="book-card-chips">
+                      {o.categorie && <span className="book-categorie">{o.categorie}</span>}
+                      {o.annee && <span className="book-year">{o.annee}</span>}
+                    </div>
+
+                    <div className="book-card-stats">
+                      <span title="Exemplaires">
+                        <span className="material-symbols-rounded" style={{ fontSize: 14 }}>inventory_2</span>
+                        {exTotal} ex.
+                      </span>
+                      <span title="Emprunts totaux">
+                        <span className="material-symbols-rounded" style={{ fontSize: 14 }}>trending_up</span>
+                        {o.totalEmprunts ?? 0}
+                      </span>
+                    </div>
+
+                    <div className="book-card-progress" title={`${tauxDispo}% disponible`}>
+                      <div
+                        className={`book-card-progress-fill${dispo === 0 ? " book-card-progress-fill--empty" : ""}`}
+                        style={{ width: `${tauxDispo}%` }}
+                      />
                     </div>
                   </div>
-                  <div className="book-meta">
-                    {o.categorie && <span className="book-categorie">{o.categorie}</span>}
-                    {o.annee && <span className="book-year">{o.annee}</span>}
-                  </div>
-                  <Badge
-                    statut={o.nbDisponibles > 0 ? "disponible" : "emprunte"}
-                    label={o.nbDisponibles > 0 ? `${o.nbDisponibles} disponible${o.nbDisponibles > 1 ? "s" : ""}` : "Aucun disponible"}
-                  />
                 </button>
               );
             })}
@@ -187,7 +342,19 @@ export default function Catalogue({ user }) {
         title={selection?.titre ?? ""}
         size="lg"
         footer={
-          <button className="btn btn-ghost" onClick={() => setSelection(null)}>Fermer</button>
+          user?.role === "admin" ? (
+            <>
+              <button className="btn btn-ghost" onClick={() => ouvrirModifier(selection)}>
+                <span className="material-symbols-rounded" style={{ fontSize: 16 }}>edit</span> Modifier
+              </button>
+              <button className="btn btn-danger btn-ghost" onClick={() => setConfirmDeleteOuvrage(selection)}>
+                <span className="material-symbols-rounded" style={{ fontSize: 16 }}>delete</span> Supprimer
+              </button>
+              <button className="btn btn-ghost" onClick={() => setSelection(null)}>Fermer</button>
+            </>
+          ) : (
+            <button className="btn btn-ghost" onClick={() => setSelection(null)}>Fermer</button>
+          )
         }
       >
         {selection && (
@@ -202,6 +369,11 @@ export default function Catalogue({ user }) {
                 {selection.isbn && (
                   <p style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--gris-doux)" }}>
                     ISBN {selection.isbn}
+                  </p>
+                )}
+                {selection.description && (
+                  <p style={{ fontSize: 13, color: "var(--gris-moyen)", marginTop: 8, lineHeight: 1.5 }}>
+                    {selection.description}
                   </p>
                 )}
               </div>
@@ -221,7 +393,8 @@ export default function Catalogue({ user }) {
             </div>
             <div className="exemplaires-list">
               {selection.exemplaires.map((ex) => {
-                const estMaResa = ex.statut === "reserve" && String(ex.reservePar) === String(user?._id);
+                const estMaResa = ex.statut === "reserve" && String(ex.reservePar) === String(uid);
+                const empruntable = ex.statut === "disponible" || ex.statut === "reserve";
                 return (
                   <div className="exemplaire-row" key={ex.code}>
                     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -238,29 +411,22 @@ export default function Catalogue({ user }) {
                       }
                     />
                     <div className="exemplaire-actions">
-                      {(ex.statut === "disponible" || estMaResa) && user?.role === "admin" && (
+                      {user?.role === "admin" && empruntable && (
                         <button
                           className="btn btn-primary btn-sm"
                           disabled={actionLoading}
-                          onClick={() => {
-                            const adherentId = prompt("Entrez l'ID ou Matricule de l'adhérent emprunteur :", user._id);
-                            if (adherentId) {
-                              agir(
-                                () => api.emprunter(selection._id, adherentId, ex.code),
-                                `Emprunt enregistré pour ${ex.code}.`
-                              );
-                            }
-                          }}
+                          onClick={() => ouvrirEmprunt(ex)}
                         >
-                          {actionLoading ? <span className="spinner" /> : <><span className="material-symbols-rounded" style={{ fontSize: 16 }}>output</span> Emprunter (Admin)</>}
+                          <span className="material-symbols-rounded" style={{ fontSize: 16 }}>output</span>
+                          {ex.statut === "reserve" ? "Valider l'emprunt" : "Emprunter"}
                         </button>
                       )}
-                      {ex.statut === "disponible" && (
+                      {ex.statut === "disponible" && user?.role !== "admin" && (
                         <button
                           className="btn btn-secondary btn-sm"
                           disabled={actionLoading}
                           onClick={() => agir(
-                            () => api.reserver(selection._id, ex.code, user._id),
+                            () => api.reserver(selection._id, ex.code, uid),
                             `Exemplaire ${ex.code} réservé.`
                           )}
                         >
@@ -272,11 +438,21 @@ export default function Catalogue({ user }) {
                           className="btn btn-ghost btn-sm"
                           disabled={actionLoading}
                           onClick={() => agir(
-                            () => api.annulerReservation(selection._id, ex.code, user._id),
+                            () => api.annulerReservation(selection._id, ex.code, uid),
                             `Réservation annulée sur ${ex.code}.`
                           )}
                         >
                           <span className="material-symbols-rounded" style={{ fontSize: 16 }}>bookmark_remove</span> Annuler résa
+                        </button>
+                      )}
+                      {user?.role === "admin" && ex.statut === "disponible" && (
+                        <button
+                          className="btn btn-danger btn-sm btn-icon"
+                          disabled={actionLoading}
+                          onClick={() => setConfirmDeleteEx(ex.code)}
+                          title="Retirer cet exemplaire"
+                        >
+                          <span className="material-symbols-rounded" style={{ fontSize: 16 }}>delete</span>
                         </button>
                       )}
                     </div>
@@ -284,7 +460,179 @@ export default function Catalogue({ user }) {
                 );
               })}
             </div>
+
+            {user?.role === "admin" && (
+              <div style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid var(--border)" }}>
+                <div style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--gris-doux)", marginBottom: 10 }}>
+                  Ajouter un exemplaire
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <input
+                    className="form-input"
+                    placeholder="Code ex. UOB-0001-D"
+                    value={newExForm.code}
+                    onChange={(e) => setNewExForm({ ...newExForm, code: e.target.value })}
+                    style={{ flex: 1, minWidth: 160 }}
+                  />
+                  <select
+                    className="form-select"
+                    style={{ width: 120 }}
+                    value={newExForm.etat}
+                    onChange={(e) => setNewExForm({ ...newExForm, etat: e.target.value })}
+                  >
+                    {ETATS.map((et) => <option key={et} value={et}>{et}</option>)}
+                  </select>
+                  <button className="btn btn-secondary btn-sm" onClick={ajouterExemplaire} disabled={actionLoading}>
+                    <span className="material-symbols-rounded" style={{ fontSize: 16 }}>add</span> Ajouter
+                  </button>
+                </div>
+              </div>
+            )}
           </>
+        )}
+      </Modal>
+
+      {/* ── Modal Modifier Ouvrage ───────────────────────────────────────── */}
+      <Modal
+        open={showEdit}
+        onClose={() => setShowEdit(false)}
+        title="Modifier l'ouvrage"
+        size="lg"
+        footer={
+          <>
+            <button className="btn btn-ghost" onClick={() => setShowEdit(false)}>Annuler</button>
+            <button className="btn btn-primary" onClick={sauverOuvrage} disabled={actionLoading}>
+              {actionLoading ? <><span className="spinner" /> Enregistrement…</> : <><span className="material-symbols-rounded" style={{ fontSize: 16 }}>save</span> Enregistrer</>}
+            </button>
+          </>
+        }
+      >
+        <div className="form-grid">
+          <div className="form-group" style={{ gridColumn: "1/-1" }}>
+            <label className="form-label">Titre *</label>
+            <input className="form-input" value={editForm.titre} onChange={(e) => setEditForm({ ...editForm, titre: e.target.value })} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Auteur *</label>
+            <input className="form-input" value={editForm.auteur} onChange={(e) => setEditForm({ ...editForm, auteur: e.target.value })} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Catégorie</label>
+            <input className="form-input" value={editForm.categorie} onChange={(e) => setEditForm({ ...editForm, categorie: e.target.value })} list="categories-list-edit" />
+            <datalist id="categories-list-edit">
+              {categories.map((c) => <option key={c} value={c} />)}
+            </datalist>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Année</label>
+            <input className="form-input" type="number" value={editForm.annee} onChange={(e) => setEditForm({ ...editForm, annee: e.target.value })} min="1800" max="2100" />
+          </div>
+          <div className="form-group">
+            <label className="form-label">ISBN</label>
+            <input className="form-input" value={editForm.isbn} onChange={(e) => setEditForm({ ...editForm, isbn: e.target.value })} />
+          </div>
+          <div className="form-group" style={{ gridColumn: "1/-1" }}>
+            <label className="form-label">Description</label>
+            <textarea
+              className="form-input"
+              rows={3}
+              value={editForm.description}
+              onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+              style={{ resize: "vertical" }}
+            />
+          </div>
+        </div>
+      </Modal>
+
+      {/* ── Modal Supprimer Ouvrage ────────────────────────────────────────── */}
+      <Modal
+        open={Boolean(confirmDeleteOuvrage)}
+        onClose={() => setConfirmDeleteOuvrage(null)}
+        title="Supprimer l'ouvrage"
+        footer={
+          <>
+            <button className="btn btn-ghost" onClick={() => setConfirmDeleteOuvrage(null)}>Annuler</button>
+            <button className="btn btn-danger" onClick={supprimerOuvrage} disabled={actionLoading}>
+              {actionLoading ? <><span className="spinner" /> Suppression…</> : <><span className="material-symbols-rounded" style={{ fontSize: 16 }}>delete</span> Supprimer</>}
+            </button>
+          </>
+        }
+      >
+        {confirmDeleteOuvrage && (
+          <div style={{ fontSize: 14, color: "var(--gris-moyen)", lineHeight: 1.7 }}>
+            <p>Supprimer définitivement :</p>
+            <div style={{ background: "var(--surface-2)", borderRadius: "var(--radius-md)", padding: "12px 16px", margin: "12px 0", border: "1px solid var(--border)" }}>
+              <div style={{ fontWeight: 700, color: "var(--ivoire)" }}>{confirmDeleteOuvrage.titre}</div>
+              <div style={{ fontSize: 13, color: "var(--gris-doux)" }}>{confirmDeleteOuvrage.auteur}</div>
+            </div>
+            <p style={{ color: "var(--rouge-clair)", display: "flex", alignItems: "center", gap: 6 }}>
+              <span className="material-symbols-rounded" style={{ fontSize: 16 }}>warning</span>
+              Impossible si des emprunts sont en cours sur cet ouvrage.
+            </p>
+          </div>
+        )}
+      </Modal>
+
+      {/* ── Modal Retirer Exemplaire ───────────────────────────────────────── */}
+      <Modal
+        open={Boolean(confirmDeleteEx)}
+        onClose={() => setConfirmDeleteEx(null)}
+        title="Retirer l'exemplaire"
+        footer={
+          <>
+            <button className="btn btn-ghost" onClick={() => setConfirmDeleteEx(null)}>Annuler</button>
+            <button className="btn btn-danger" onClick={retirerExemplaire} disabled={actionLoading}>
+              {actionLoading ? <><span className="spinner" /> Retrait…</> : "Retirer"}
+            </button>
+          </>
+        }
+      >
+        {confirmDeleteEx && (
+          <p style={{ fontSize: 14, color: "var(--gris-moyen)" }}>
+            Retirer l'exemplaire <strong style={{ fontFamily: "var(--font-mono)", color: "var(--or-clair)" }}>{confirmDeleteEx}</strong> du catalogue ?
+            Seuls les exemplaires <strong>disponibles</strong> peuvent être retirés.
+          </p>
+        )}
+      </Modal>
+
+      {/* ── Modal Emprunt (admin) ─────────────────────────────────────────── */}
+      <Modal
+        open={Boolean(empruntModal)}
+        onClose={() => setEmpruntModal(null)}
+        title="Enregistrer un emprunt"
+        footer={
+          <>
+            <button className="btn btn-ghost" onClick={() => setEmpruntModal(null)}>Annuler</button>
+            <button className="btn btn-primary" onClick={confirmerEmprunt} disabled={actionLoading || !empruntModal?.adherentId}>
+              {actionLoading ? <><span className="spinner" /> Traitement…</> : <><span className="material-symbols-rounded" style={{ fontSize: 16 }}>check</span> Confirmer l'emprunt</>}
+            </button>
+          </>
+        }
+      >
+        {empruntModal && (
+          <div style={{ fontSize: 14, color: "var(--gris-moyen)", lineHeight: 1.7 }}>
+            <p>Exemplaire <strong style={{ fontFamily: "var(--font-mono)", color: "var(--or-clair)" }}>{empruntModal.exemplaire.code}</strong></p>
+            {empruntModal.exemplaire.statut === "reserve" && (
+              <p style={{ fontSize: 13, color: "var(--vert-clair)", marginBottom: 12 }}>
+                Cet exemplaire est réservé — l'emprunt convertira la réservation en prêt.
+              </p>
+            )}
+            <div className="form-group">
+              <label className="form-label">Adhérent emprunteur *</label>
+              <select
+                className="form-select"
+                value={empruntModal.adherentId}
+                onChange={(e) => setEmpruntModal({ ...empruntModal, adherentId: e.target.value })}
+              >
+                <option value="">— Choisir un adhérent —</option>
+                {adherents.map((a) => (
+                  <option key={a._id} value={a._id}>
+                    {a.prenom} {a.nom} ({a.matricule}) — {a.type === "enseignant" ? "30 j" : "14 j"}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
         )}
       </Modal>
 

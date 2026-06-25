@@ -45,8 +45,12 @@ export default function App() {
         setUser(u);
         setPage(u.role === "admin" ? "dashboard" : "catalogue");
       })
-      .catch(() => {
+      .catch((err) => {
         localStorage.removeItem("token");
+        // Token périmé après seed ou backend arrêté — on affiche le login sans erreur bruyante
+        if (err.message && !err.message.includes("Session") && !err.message.includes("401")) {
+          console.warn("Session non restaurée :", err.message);
+        }
       })
       .finally(() => setAuthLoading(false));
   }, []);
@@ -161,11 +165,11 @@ export default function App() {
                 {(user.prenom[0] ?? "") + (user.nom[0] ?? "")}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ivoire)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--blanc)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                   {user.prenom} {user.nom}
                 </div>
-                <div style={{ fontSize: 11, color: user.role === "admin" ? "var(--or)" : "var(--gris-doux)", fontWeight: 600 }}>
-                  {user.role === "admin" ? "Bibliothécaire" : "Membre"}
+                <div style={{ fontSize: 11, color: user.role === "admin" ? "var(--or-clair)" : "#CBD5E1", fontWeight: 600 }}>
+                  {user.role === "admin" ? "Bibliothécaire" : user.type === "enseignant" ? "Enseignant" : "Étudiant"}
                 </div>
               </div>
             </div>
@@ -193,7 +197,7 @@ export default function App() {
             {page === "dashboard" && user.role === "admin" && <Dashboard onNavigate={navigate} />}
             {page === "catalogue" && <Catalogue user={user} />}
             {page === "emprunts"  && <Emprunts user={user} />}
-            {page === "adherents" && user.role === "admin" && <Adherents adherents={[]} onChange={() => {}} />}
+            {page === "adherents" && user.role === "admin" && <Adherents />}
             {page === "stats"     && user.role === "admin" && <Stats />}
           </main>
         </div>
